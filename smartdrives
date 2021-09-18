@@ -1,0 +1,322 @@
+#!/bin/bash
+#####################################################
+## smartdrives
+## runs smartmontools stuff for managing your drives
+#####################################################
+set -e
+
+# use bashetize colours
+# requires https://github.com/brian-lamb-software-engineer/bashetize.git 
+. ~/etc/.bash-colours
+
+#logs
+# needs hdparm
+#blamb dot dev at gmail dot com
+ALLDRIVELIST=( "sda" "sdb" "sdc" "sdd" "sde" "sdg" "sdh" "sdi" "sdj" "sdk" "sdl" "sdm" "sdn" "sdf" );
+LOGPATH="/var/log/smartdrives" # No Trailing Slash
+# LOGENABLE 1 is on
+LOGENABLE=1
+PINK="\033[35;40m" 
+RED="\033[0;31m"
+SALMON="\e[38;5;216m"
+RESETCOLOR="\e[00m"
+
+#sleep ".25"
+echo
+echo "... BEGIN smartdrives"
+#sleep ".75"
+
+#for DRIVE in "${ALLDRIVELIST[@]}";
+#do
+#	echo $DRIVE;
+#	sleep ".3"
+#done
+
+#/usr/local/bin/smartdrives-checktests
+
+echo
+
+#grab some drive info
+LS="$(lsscsi)"
+#two cols of data, device serial  e.g. sda xxx
+SERIALS="$(lsblk -d -o name,serial)" 
+DISKIDS=`( ls -la /dev/disk/by-id/)`
+
+#clearvars()
+# add vars you want cleared, each iteration, here
+clearvars() {
+  SMARTDATA=
+  SADATA=
+  SBDATA=
+  SERIAL=
+  DISKID=
+}
+
+#adata
+# sata-a data, pre 2020 smartctl data capture, which was predictable. method a. 
+adata (){
+  if [[ "${SADATA}" == *Temperature* ]]; then
+  #if [[ $SADATA == *"Always"* ]]; then 
+    # | grep Cels)";
+    # | grep "Temperature_\|Temperature:" | head -1`;
+    TEMP=`echo "$SADATA" | grep "Temperature_\|Temperature:" | head -1`; # head -1 is because Temperature: returns both Current Drive Temperature: and Drive Trip Temp, but we only want the former. 
+    #TEMP="$(cut -d - -f 2 <<< \"$TEMP\")";
+    TEMP="$(sed -e 's#.*Always\(\)#\1#' <<< \"$TEMP\")";
+    #rid after the paren
+    TEMP="${TEMP%%(*}"
+    #rid the previous hyphen
+    TEMP="${TEMP#*-}"
+    #rid quote after
+    TEMP="${TEMP//\"}"
+    #rid space
+    TEMP="${TEMP// }"
+    #convert to F
+    TEMP=$(echo "scale=2;((9/5) * $TEMP) + 32" |bc)
+    #add F
+    TEMP="${TEMP%.*}"
+
+  #
+  #
+  else
+    echo -e "${RED}... temp not found in adata!${RESETCOLOR}"
+  fi
+  #string in a long string comparison
+  if [[ "${SADATA}" == *Hours* ]]; then
+    HOURS="$(echo "$SADATA" | grep On_Hours)";
+    #extract hour number, a double quote slips by
+    HOURS="$(sed -e 's#.*Always\(\)#\1#' <<< \"$HOURS\")";
+    #cut off the double quote from the end
+    HOURS="${HOURS%%\"}"
+    #rid the previous hyphen
+    HOURS="${HOURS#*-}"
+        #remove whitespace
+    #HOURS="$(sed -e 's/[[:space:]]*$//' <<<${HOURS})"
+  else
+    echo -e "${RED}... hours not found in adata!${RESETCOLOR}"
+  fi
+  if [[ $SADATA == *"Reallocated_Sector"* ]]; then
+    REALLOCSECTORS="$(echo "${SADATA}" | grep Reallocated_Sector)";
+    REALLOCSECTORS="$(sed -e 's#.*Always\(\)#\1#' <<< \"$REALLOCSECTORS\")";
+    REALLOCSECTORS="${REALLOCSECTORS%%\"*}"
+    #rid the previous hyphen
+    REALLOCSECTORS="${REALLOCSECTORS#*-}"
+    PENDINGSECTORS="$(/sbin/smartctl /dev/$DRIVE -a | grep Pending)";
+    PENDINGSECTORS="$(sed -e 's#.*Always\(\)#\1#' <<< \"$PENDINGSECTORS\")";
+    PENDINGSECTORS="${PENDINGSECTORS#*-}"
+    #remove quote
+    PENDINGSECTORS="${PENDINGSECTORS%%\"*}"
+  else
+    echo -e "${RED}... sector info not found in adata!${RESETCOLOR}"
+  fi
+  if [[ $SADATA == *"UDMA"* ]]; then
+    CRCERRORCOUNT="$(echo "${SADATA}" | grep UDMA)";
+    #UDMACRCERRORCOUNT="${UDMACRCERRORCOUNT%%\"*}"
+    #rid the previous hyphen
+    #UDMACRCERRORCOUNT="${UDMACRCERROCOUNT#*-}"
+    CRCERRORCOUNT="$(sed -e 's#.*Always\(\)#\1#' <<< \"$CRCERRORCOUNT\")";
+    CRCERRORCOUNT="${CRCERRORCOUNT%%\"*}"
+    CRCERRORCOUNT="${CRCERRORCOUNT#*-}"
+  else
+    echo -e "${RED}... crc info not found in adata!${RESETCOLOR}"
+  fi
+  if [[ $SADATA == *"Start_Stop"* ]]; then
+    SPINCYCLES="$(echo ${SADATA} | grep Start_Stop)";
+    SPINCYCLES="$(sed -e 's#.*Always\(\)#\1#' <<< \"$SPINCYCLES\")";
+    SPINCYCLES="${SPINCYCLES%%\"*}"
+    SPINCYCLES="${SPINCYCLES#*-}"
+  else
+    echo -e "${RED}... spincycles info not found in adata!${RESETCOLOR}"
+  fi
+  SERIAL=`echo "$SERIALS" | grep $DRIVE`;
+  #SERIAL="$(sed -e 's#.*Number:\(\)#\1#' <<< \"$SERIAL\")"  
+  #ALTERNATELY, use variable substitution
+  #Cut all before
+  ##SERIAL="${SERIAL#*Number:}"
+  #Cut all after
+  ##SERIAL="${SERIAL%%Transport*}"
+  # cut off last n
+  SERIAL="${SERIAL: -8}"
+  #echo "${tmp%%/*}"
+  #REFORMATTEDSERIAL=`cut -f1 -d "Transport" $FORMATTEDSERIAL`;
+  ##SERIAL_TRIMMED="$(echo -e "${SERIAL}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  #SERIAL="$(echo $SERIAL | awk 'END {print $2 }')" 
+  #echo "DEBUG, SERIAL is: $SERIAL"
+  #echo "DEBUG, SERIAL has become: $SERIAL"
+}
+
+# bdata()
+# bdata is sata method b of capturing smart data, which differes either because of a sas to sata adapter, or the sata card itself.make a method c, if niether a or b work for your new devices, there forward.  
+bdata () {
+  #echo ...bdata is runing.
+  if [[ "${SBDATA}" == *Temperature* ]]; then
+    # | grep Cels)";
+    # | grep "Temperature_\|Temperature:" | head -1`;
+    TEMP=`echo "$SBDATA" | grep Temperature: | head -1`; 
+    #cut for sadata
+    #TEMP="$(cut -d - -f 2 <<< \"$TEMP\")";
+    #TEMP="${TEMP##Current Drive Temperature: }"
+    TEMP="$(echo $TEMP | awk 'END {print $4 }')"
+    #convert to F
+    TEMP=$(echo "scale=2;((9/5) * $TEMP) + 32" |bc)
+    #add F
+    TEMP="${TEMP%.*}"
+  #else
+    #echo ...there was a problem getting temperature from bdata..
+    #echo -e "${RED}... temperature not found in bdata${RESETCOLOR}"
+  fi
+  if [[ "${SBDATA}" == *hours* ]]; then
+    HOURBLOCK=`echo "${SBDATA}" | grep hours  -A 1 | tail -n +1`
+    #grab nearest estimated hour, if possible.  Run tests often and this will be more accurate number. 
+    HOURS=` echo ${HOURBLOCK} | sed 's/.*Completed - //' |  awk 'END {print $1 }'`
+  #else
+    #echo -e "${RED}... hour not found in bdata!${RESETCOLOR}"
+  fi
+  #SERIAL=`smartctl /dev/$DRIVE -i | grep Serial`; 
+  #SERIAL=`echo ${SERIAL:25:8}` 
+  SERIAL=`echo "${SBDATA}" | grep Serial`; 
+  SERIAL=`echo ${SERIAL:22:8}` 
+}
+
+# sdata() 
+# special data, e.g. other than smart data, other compiled device info such as that from hdparm, lsscsi, and other stuff.
+sdata (){
+  #convert hours to year
+  YEARS="$((HOURS / 24 / 365 ))"
+  #echo ...calculating model..
+  MODEL="$(echo "$LS" | grep $DRIVE)";
+  #MODEL="$(sed -e 's#.*Number:\(\)#\1#' <<< \"$MODEL\")";
+  #MODEL="${MODEL%%\"}"
+  MODEL="$(echo $MODEL | awk 'END {print $4 $5 $6 }')"
+  # cut off $6 for the cases where its teh drive path
+  MODEL="${MODEL%%\/dev\/sd*}" 
+  #MODEL="${MODEL%%---*}" 
+  if [[ $SBDATA == *"Reallocated_Sector"* ]]; then
+    REALLOCSECTORS="$(echo "${SBDATA}" | grep Reallocated_Sector)";
+    REALLOCSECTORS="$(sed -e 's#.*Always\(\)#\1#' <<< \"$REALLOCSECTORS\")";
+    REALLOCSECTORS="${REALLOCSECTORS%%\"*}"
+    #rid the previous hyphen
+    REALLOCSECTORS="${REALLOCSECTORS#*-}"
+    PENDINGSECTORS="$(/sbin/smartctl /dev/$DRIVE -a | grep Pending)";
+    PENDINGSECTORS="$(sed -e 's#.*Always\(\)#\1#' <<< \"$PENDINGSECTORS\")";
+    PENDINGSECTORS="${PENDINGSECTORS#*-}"
+    #remove quote
+    PENDINGSECTORS="${PENDINGSECTORS%%\"*}"
+  #else
+    #echo ... sector info not found in smart data
+  fi
+  if [[ $SADATA == *"UDMA"* ]]; then
+    CRCERRORCOUNT="$(echo "${SADATA}" | grep UDMA)";
+    #UDMACRCERRORCOUNT="${UDMACRCERRORCOUNT%%\"*}"
+    #rid the previous hyphen
+    #UDMACRCERRORCOUNT="${UDMACRCERROCOUNT#*-}"
+    CRCERRORCOUNT="$(sed -e 's#.*Always\(\)#\1#' <<< \"$CRCERRORCOUNT\")";
+    CRCERRORCOUNT="${CRCERRORCOUNT%%\"*}"
+    CRCERRORCOUNT="${CRCERRORCOUNT#*-}"
+  #else
+    #echo -e "${RED}... no crc smart data found${RESETCOLOR}"
+  fi
+
+  # adding diskid, needed for ZFS and the likes
+  #DISKID=`( ls -la /dev/disk/by-id/ | grep $DRIVE | head -n 1 |rev|cut -d" " -f3|rev)`
+  DISKID=`echo "$DISKIDS" | grep $DRIVE | head -n 1 |rev|cut -d" " -f3|rev`
+}
+
+#logfile()
+logfile() {
+  if [ $LOGENABLE != 1 ]; then
+    echo ... skipping log..
+  else
+    #echo ...setting up log path..
+	  #LOG="${LOGPATH}/${DRIVE}.log";
+    #LOG="${LOGPATH}/${SERIAL_TRIMMED}.log";
+    LOG="${LOGPATH}/${SERIAL}.log";
+    # The LOGFILE verbiage
+    #echo "DEBUG: LOG SERIAL is: $SERIAL"
+	  echo "
+--- $DRIVE - $MODEL --------------------
+$(date)
+Serial: $SERIAL
+Disk ID: $DISKID
+Temp:	$TEMP 	
+Hours:	 $HOURS
+Reallocated sectors:		$REALLOCSECTORS
+Pending sectors:		$PENDINGSECTORS
+CRC Errors:			$CRCERRORCOUNT
+Start Stop Count(Spin Cycles): $SPINCYCLES
+" >> $LOG;
+	  #echo "- ${LOG} updated.."
+  fi
+}
+
+#output()
+output (){
+  echo "$SERIAL ($DRIVE) $DISKID";
+	#this one is different format because model comes out special from hdparm
+	echo "Model: $MODEL" 
+  #echo  "Drive:		 $DRIVE"
+  #	echo "- Device    -    ${DRIVE}";
+	#echo  "Hours:        $HOURS H ($YEARS Y)";
+  #F symbol, best one i could find, looks better than any others..
+  FARENHEIT="\xE2\x84\x89"
+  echo -e "$HOURS H ($YEARS Y) | ${SALMON}$TEMP${FARENHEIT}";
+#	echo  "${RESETCOLOR}Years:        $YEARS Y";
+	echo -e "${RED}Reallocated Sectors:	$REALLOCSECTORS";
+  echo -e "UDMA CRC Errors:	$CRCERRORCOUNT";
+	echo -e "Pending sectors:	$PENDINGSECTORS${RESETCOLOR}";
+	#echo -e "  Temp:		  $TEMP F";
+}
+
+#loadSmartData()
+loadSmartData (){
+  #if [ -z "${SMARTDATA}" ]; then
+    #gather data
+    SMARTDATA=`/sbin/smartctl /dev/$DRIVE -a \
+      | head -78 \
+      `; 
+  #else echo ...smartdata is already loaded, using that copy. 
+  #fi
+  if [ -z "${SMARTDATA}" ]; then
+    echo ... no smart data; echo "exiting!"
+    exit 1;
+  fi
+  if [[ "${SMARTDATA}" == *SAS* ]]; then
+    #echo .. is a SAS drive..
+    SBDATA=`echo "$SMARTDATA"`
+  else
+    #echo ... doesnt have string eh!
+    #| grep -e "^][[[:digit:]].[1-3].*$"
+    SADATA=`(echo "$SMARTDATA" -A 35 |  grep -E "^( {0,3})([0-9]{1,3})")`
+  fi
+}
+
+
+# ITERATE DRIVE LIST
+for DRIVE in "${ALLDRIVELIST[@]}";
+do
+  loadSmartData;
+  # sadata, and sbdata are now initialized  
+  if ! [ -z "${SADATA}" ]; then
+    #echo ... SADATA is set
+    #run sata-a method
+    # this is the standard old method, where old predictable smart data is parsed
+    adata;
+  elif ! [ -z "${SBDATA}" ]; then
+    # run sata-b method, which for now is for sas drives attached to sata controller via sas to sata adapter, which pulls limited, or different version of smart data, so its parsed differently here
+    bdata;
+  #elif add future methods here, e.g. scdata, sddata, etc.. 
+  fi
+
+  #also run special functions to grab the rest of the data
+  sdata;
+  # now that all data is loaded, report it to output
+  output;
+  #log to file, when var is set to enable it   
+  logfile && clearvars;
+  echo -----------------------------------
+	sleep ".75";
+	echo 
+done
+echo "... smartdrives COMPLETE."
+##############
+## SCRIPT END
+##############
