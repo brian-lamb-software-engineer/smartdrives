@@ -12,7 +12,7 @@ set -e
 #logs
 # needs hdparm
 #blamb dot dev at gmail dot com
-ALLDRIVELIST=( "sda" "sdb" "sdc" "sdd" "sde" "sdg" "sdh" "sdi" "sdj" "sdk" "sdl" "sdm" "sdn" "sdf" );
+ALLDRIVELIST=( "sda" "sdb" "sdc" "sdd" "sde" "sdf" "sdg" "sdh" "sdi" "sdj" "sdk" "sdl" "sdm" "sdn" );
 LOGPATH="/var/log/smartdrives" # No Trailing Slash
 # LOGENABLE 1 is on
 LOGENABLE=1
@@ -40,6 +40,12 @@ echo
 LS="$(lsscsi)"
 #two cols of data, device serial  e.g. sda xxx
 SERIALS="$(lsblk -d -o name,serial)" 
+#ALTERNATIVEW SERIAL, however its still not showing serial, 
+## but WWN only (twice instead of serial)
+#lsblk -o type,name,labelartlabel,size,model,serial,wwn,uuid | cat 
+# CORRECT ALTERNATIVE THAT WORKS ON THIS SCSI CARD
+# udevadm info --path=/sys/block/sdx
+# udevadm info --path=/sys/block/sdx | grep ID_SCSI_SERIAL
 DISKIDS=`( ls -la /dev/disk/by-id/)`
 
 #clearvars()
@@ -50,6 +56,7 @@ clearvars() {
   SBDATA=
   SERIAL=
   DISKID=
+	MODEL=
 }
 
 #adata
@@ -143,7 +150,6 @@ adata (){
   #echo "DEBUG, SERIAL is: $SERIAL"
   #echo "DEBUG, SERIAL has become: $SERIAL"
 }
-
 # bdata()
 # bdata is sata method b of capturing smart data, which differes either because of a sas to sata adapter, or the sata card itself.make a method c, if niether a or b work for your new devices, there forward.  
 bdata () {
@@ -171,10 +177,35 @@ bdata () {
   #else
     #echo -e "${RED}... hour not found in bdata!${RESETCOLOR}"
   fi
-  #SERIAL=`smartctl /dev/$DRIVE -i | grep Serial`; 
-  #SERIAL=`echo ${SERIAL:25:8}` 
-  SERIAL=`echo "${SBDATA}" | grep Serial`; 
-  SERIAL=`echo ${SERIAL:22:8}` 
+  ##SERIAL=`smartctl /dev/$DRIVE -i | grep Serial`; 
+  ##SERIAL=`echo ${SERIAL:25:8}` 
+	#NEW Method
+  #SERIAL=`echo "${SBDATA}" | grep Serial`; 
+  #SERIAL=`echo ${SERIAL:22:8}` 
+	# NEW METHOD; MOVING SERIAL FROM ORIGINAL ARRAY, TO udevadm for these drives 
+  #  since wwn was being reported as serial due to a bug in utillinux 
+	# https://github.com/util-linux/util-linux/issues/1143
+	THISERIAL="$(udevadm info -q property --path=/sys/block/$DRIVE | grep ID_SCSI_SERIAL)"
+  #SERIAL=`echo ${THISERIAL:15:8}` 
+	SERIAL=`echo ${THISERIAL#*=}`
+	#WD reports 12 digit serial starting with W, but has actual needed serial in last 8 chars. 
+	# Seagate IBM drives report 20 digits, starting with Z, but actual needed is first 8 chars.
+	# if Western Digital drive
+	SHORTMODEL=` lsscsi | grep $DRIVE | awk 'END {print $4 }' ` 
+	#SHORTMODEL=$( lsscsi | grep ${DRIVE} ) 
+	#	echo ${SHORTMODEL}
+	if [[ ${SHORTMODEL::1} == "W" ]]; then
+		#echo "is Western Digital Drive"	
+		# remove first 4 chars
+		SERIAL=${SERIAL:4}	
+	# if seagate drive	
+	elif [[ $SHORTMODEL == S* ]]; then
+		#echo "is Seagate drive"
+		#take only first 8 chars
+		SERIAL=${SERIAL::8}	
+ 	# else
+ 	#	SERIAL=$SERIAL	
+	fi
 }
 
 # sdata() 
