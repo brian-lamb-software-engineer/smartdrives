@@ -12,13 +12,19 @@ set -e
 #logs
 # needs hdparm
 #blamb dot dev at gmail dot com
-ALLDRIVELIST=( "sda" "sdb" "sdc" "sdd" "sde" "sdf" "sdg" "sdh" "sdi" "sdj" "sdk" "sdl" "sdm" "sdn" );
+#ALLDRIVELIST=( "sda" "sdb" "sdc" "sdd" "sde" "sdf" "sdg" "sdh" "sdi" "sdj" "sdk" "sdl" "sdm" "sdn" );
+ALLDRIVELIST=( "sda" "sdb" "sdc" "sdd" "sde" "sdf" "sdg" "sdh" "sdi" "sdj" );
 LOGPATH="/var/log/smartdrives" # No Trailing Slash
 # LOGENABLE 1 is on
 LOGENABLE=1
-PINK="\033[35;40m" 
+BLUE="\033[0;34m"         # Blue
+GREEN="\x1B[32m"
+CYAN="\033[0;36m"         # Cyan
+SALMON="\033[38;5;216m"
+YELLOW="\033[0;33m"  
+ORANGE="\033[38;5;209m"
 RED="\033[0;31m"
-SALMON="\e[38;5;216m"
+PINK="\033[35;40m" 
 RESETCOLOR="\e[00m"
 
 #sleep ".25"
@@ -88,7 +94,7 @@ adata (){
     echo -e "${RED}... temp not found in adata!${RESETCOLOR}"
   fi
   #string in a long string comparison
-  if [[ "${SADATA}" == *Hours* ]]; then
+  if [[ "${SADATA}" == *hours* ]]; then
     HOURS="$(echo "$SADATA" | grep On_Hours)";
     #extract hour number, a double quote slips by
     HOURS="$(sed -e 's#.*Always\(\)#\1#' <<< \"$HOURS\")";
@@ -166,14 +172,32 @@ bdata () {
     TEMP=$(echo "scale=2;((9/5) * $TEMP) + 32" |bc)
     #add F
     TEMP="${TEMP%.*}"
+    # Set temp output colors 
+    if ((32<=$TEMP && $TEMP<=61)); then
+      TEMP="$BLUE $TEMP COLD"
+    elif ((62<=$TEMP && $TEMP<=75)); then
+      TEMP="$GREEN $TEMP OPTIMAL"
+    elif ((76<=$TEMP && $TEMP<=85)); then
+      TEMP="$CYAN $TEMP NOT BAD"
+    elif ((86<=$TEMP && $TEMP<=100)); then
+      TEMP="$YELLOW $TEMP BORDERLINE WARM CHECK AIRFLOW"
+    elif ((101<=$TEMP && $TEMP<=114)); then
+      TEMP="$SALMON $TEMP WARM CHECK AIRFLOW"
+    elif ((115<=$TEMP && $TEMP<=130)); then
+      TEMP="$RED $TEMP TOO HOT, COOL DOWN NOW! CHECK FANS"
+    elif ((131<=$TEMP && $TEMP<=175)); then
+      TEMP="$PINK $TEMP MAY FAIL, COOL DOWN IMMEDIATELY OR SHUT DOWN! CHECK FANS"
+    fi 
+
   #else
     #echo ...there was a problem getting temperature from bdata..
     #echo -e "${RED}... temperature not found in bdata${RESETCOLOR}"
   fi
-  if [[ "${SBDATA}" == *hours* ]]; then
-    HOURBLOCK=`echo "${SBDATA}" | grep hours  -A 1 | tail -n +1`
+  if [[ "${SBDATA}" == *minutes* ]]; then
+    HOURS=`echo "$SBDATA" | grep -oP ":minutes\s+\K\d+"` 
+   # HOURBLOCK=`echo "${SBDATA}" | grep hours  -A 1 | tail -n +1`
     #grab nearest estimated hour, if possible.  Run tests often and this will be more accurate number. 
-    HOURS=` echo ${HOURBLOCK} | sed 's/.*Completed - //' |  awk 'END {print $1 }'`
+    #HOURS=` echo ${HOURBLOCK} | sed 's/.*Completed - //' |  awk 'END {print $1 }'`
   #else
     #echo -e "${RED}... hour not found in bdata!${RESETCOLOR}"
   fi
@@ -246,6 +270,10 @@ sdata (){
   #else
     #echo -e "${RED}... no crc smart data found${RESETCOLOR}"
   fi
+  if [[ $SBDATA == *"uncorrected"* ]]; then # /(\w+)/g
+    ECC_READFAST=`echo $SBDATA | grep -oP "read:\s+\w+"`
+    ECC_CORRECTED=$ECC_READFAST
+  fi
 
   # adding diskid, needed for ZFS and the likes
   #DISKID=`( ls -la /dev/disk/by-id/ | grep $DRIVE | head -n 1 |rev|cut -d" " -f3|rev)`
@@ -273,6 +301,7 @@ Hours:	 $HOURS
 Reallocated sectors:		$REALLOCSECTORS
 Pending sectors:		$PENDINGSECTORS
 CRC Errors:			$CRCERRORCOUNT
+Uncorrected Errors (Read Fast):     $UNCORRECTED
 Start Stop Count(Spin Cycles): $SPINCYCLES
 " >> $LOG;
 	  #echo "- ${LOG} updated.."
@@ -289,11 +318,12 @@ output (){
 	#echo  "Hours:        $HOURS H ($YEARS Y)";
   #F symbol, best one i could find, looks better than any others..
   FARENHEIT="\xE2\x84\x89"
-  echo -e "$HOURS H ($YEARS Y) | ${SALMON}$TEMP${FARENHEIT}";
+  echo -e "$HOURS H ($YEARS Y) | $TEMP${FARENHEIT}";
 #	echo  "${RESETCOLOR}Years:        $YEARS Y";
 	echo -e "${RED}Reallocated Sectors:	$REALLOCSECTORS";
   echo -e "UDMA CRC Errors:	$CRCERRORCOUNT";
-	echo -e "Pending sectors:	$PENDINGSECTORS${RESETCOLOR}";
+	echo -e "Pending sectors:	$PENDINGSECTORS"
+  echo -e "ECC Corrected: $ECC_CORRECTED${RESETCOLOR}"
 	#echo -e "  Temp:		  $TEMP F";
 }
 
@@ -301,7 +331,7 @@ output (){
 loadSmartData (){
   #if [ -z "${SMARTDATA}" ]; then
     #gather data
-    SMARTDATA=`/sbin/smartctl /dev/$DRIVE -a \
+    SMARTDATA=`/sbin/smartctl /dev/$DRIVE -x \
       | head -78 \
       `; 
   #else echo ...smartdata is already loaded, using that copy. 
@@ -310,43 +340,60 @@ loadSmartData (){
     echo ... no smart data; echo "exiting!"
     exit 1;
   fi
-  if [[ "${SMARTDATA}" == *SAS* ]]; then
+  #echo $SMARTDATA
+  if [[ "${SMARTDATA}" == *"SAS"* ]]; then
     #echo .. is a SAS drive..
     SBDATA=`echo "$SMARTDATA"`
+  elif [[ "${SMARTDATA}" == *"failed"* ]]; then
+    SMARTDATA=''
   else
     #echo ... doesnt have string eh!
     #| grep -e "^][[[:digit:]].[1-3].*$"
     SADATA=`(echo "$SMARTDATA" -A 35 |  grep -E "^( {0,3})([0-9]{1,3})")`
-  fi
+   fi
 }
 
 
 # ITERATE DRIVE LIST
 for DRIVE in "${ALLDRIVELIST[@]}";
 do
-  loadSmartData;
+  loadSmartData
   # sadata, and sbdata are now initialized  
-  if ! [ -z "${SADATA}" ]; then
+  if [  -z "${SMARTDATA}" ]; then
+    echo "($DRIVE) no smart data"
+    # @TODO move this to BDATA and or ADATA
+    # command to get /dev/sd<letter> AND serial
+    #udevadm info /dev/sda| grep -B 1 by-id ;  udevadm info /dev/sdb| grep -B 1 by-id ; udevadm info /dev/sdc| grep -B 1 by-id ; udevadm info /dev/sdd| grep -B 1 by-id ; udevadm info /dev/sde| grep -B 1 by-id ; udevadm info /dev/sdf| grep -B 1 by-id ; udevadm info /dev/sdg | grep -B 1 by-id
+    udevadm info /dev/$DRIVE | grep by-id | grep scsi | grep "S:" | head 
+    udevadm info /dev/$DRIVE | grep "N:" | head
+  elif [ ! -z "${SADATA}" ]; then
     #echo ... SADATA is set
     #run sata-a method
     # this is the standard old method, where old predictable smart data is parsed
     adata;
-  elif ! [ -z "${SBDATA}" ]; then
+  elif [ ! -z "${SBDATA}" ]; then
     # run sata-b method, which for now is for sas drives attached to sata controller via sas to sata adapter, which pulls limited, or different version of smart data, so its parsed differently here
     bdata;
   #elif add future methods here, e.g. scdata, sddata, etc.. 
   fi
 
-  #also run special functions to grab the rest of the data
-  sdata;
-  # now that all data is loaded, report it to output
-  output;
+
+  if [ ! -z "${SMARTDATA}" ]; then
+    #also run special functions to grab the rest of the data
+    sdata;
+    # now that all data is loaded, report it to output
+    output;
+  fi
+
+
   #log to file, when var is set to enable it   
   logfile && clearvars;
   echo -----------------------------------
 	sleep ".75";
 	echo 
 done
+
+
 echo "... smartdrives COMPLETE."
 ##############
 ## SCRIPT END
