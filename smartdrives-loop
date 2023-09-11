@@ -1,0 +1,9 @@
+while true
+  do 
+    echo "gathering drive info..."
+    smartdrives 2> /dev/null| grep -v "No such device"| grep sd ;
+    echo '---------------------------------'; 
+    echo; 
+    echo; 
+    sleep 7;  
+  done
