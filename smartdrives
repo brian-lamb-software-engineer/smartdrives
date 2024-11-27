@@ -294,6 +294,13 @@ sdata (){
     ECC_CORRECTED=$ECC_READFAST
   fi
 
+  # attempt to cleanup sector counts
+  #PENDINGSECTORS=$( [[ $PENDINGSECTORS -ge 1 ]] && echo -e  "$YELLOW $PENDINGSECTOR S{RED" || echo -e "$GREEN $PENDINGSECTORS $RED")
+
+  #[[ $CRCERRORCOUNT -ge 1 ]] && CRCERRORCOUNT="${YELLOW}$CRCERRORCOUNT${RED}" || CRCERRORCOUNT="${GREEN}$CRCERRORCOUNT${RED}"
+
+  #[[ $REALLOCSECTORS -ge 1 ]] && REALLOCSECTORS="${YELLOW}$REALLOCSECTORS${RED}" || REALLOCSECTORS="${GREEN}$REALLOCSECTORS${RED}"
+
   # adding diskid, needed for ZFS and the likes
   #DISKID=`( ls -la /dev/disk/by-id/ | grep $DRIVE | head -n 1 |rev|cut -d" " -f3|rev)`
   DISKID=`echo "$DISKIDS" | grep $DRIVE | head -n 1 |rev|cut -d" " -f3|rev`
@@ -318,8 +325,8 @@ Disk ID: $DISKID
 Temp:	$TEMP 	
 Hours:	 $HOURS
 Reallocated sectors:		$REALLOCSECTORS
-Pending sectors:		$PENDINGSECTORS
-CRC Errors:			$CRCERRORCOUNT
+Pending sectors: $PENDINGSECTORS
+CRC Errors:	$CRCERRORCOUNT
 Uncorrected Errors (Read Fast):     $UNCORRECTED
 Start Stop Count(Spin Cycles): $SPINCYCLES
 " >> $LOG;
